@@ -35,6 +35,47 @@ const removeId = (client) => {
   }
 }
 
+const MAX_SECONDS = 120
+
+const updateTimer = async (emitter, room_id, room) => {
+  room["seconds"]--;
+  if (room["seconds"] >= 0) {
+    await emitter.to(room_id).emit("update_time", room["seconds"]);
+  }
+  if (room["seconds"] < 0) {
+    await emitter.to(room_id).emit('log_event', "Time's up!");
+    madeMove(emitter, true, room_id);
+    resetClock(room);
+    emitter.to(room_id).emit("update_time", room["seconds"]);
+  }
+}
+
+const resetClock = (room) => {
+  clearInterval(room["timer"]);
+  room["seconds"] = MAX_SECONDS;
+}
+
+const madeMove = async (emitter, keep, room_id) => {
+  let room = rooms.filter(room => room["room_id"] == room_id)[0]
+  resetClock(room);
+  await emitter.to(room_id).emit("update_time", room["seconds"]);
+  let clients = room["clients"];
+  let player_index = !clients[0]["isPeeker"] ? 0 : 1;
+  let opponent_index = player_index ? 0 : 1;
+  let player = clients[player_index];
+  let message = keep ? `${player["username"]} chose to keep their box!` : `${player["username"]} chose to swap their box!`;
+  await emitter.to(room_id).emit('log_event', message);
+  let opponent = clients[opponent_index];
+  let won = (player["hasCarrot"] && keep) || (!player["hasCarrot"] && !keep)
+  if (won) {
+    player["score"]++;
+  } else {
+    opponent["score"]++;
+  }
+  emitter.to(player["client_id"]).emit("game_update", {won: won, scores: [player["score"], opponent["score"]]});
+  emitter.to(opponent["client_id"]).emit("game_update", {won: !won, scores: [opponent["score"], player["score"]]});
+}
+
 let rooms = []
 
 io.on("connection", (socket) => {
@@ -53,7 +94,9 @@ io.on("connection", (socket) => {
       rooms.push({
         room_id: data.room,
         clients: [newUser],
-        num_ready: 0
+        num_ready: 0,
+        seconds: MAX_SECONDS,
+        timer: null
       })
     } else {
       ourRoom = filteredRooms[0]
@@ -70,21 +113,7 @@ io.on("connection", (socket) => {
     }
 
     socket.on("choose_box", async (data) => {
-      let message = data.keep ? `${data.username} chose to keep their box!` : `${data.username} chose to swap their box!`
-      await io.to(data.room).emit('log_event', message);
-      let clients = rooms.filter(room => room["room_id"] == data.room)[0]["clients"];
-      let player_index = clients[0]["client_id"] == socket.id ? 0 : 1;
-      let opponent_index = player_index ? 0 : 1;
-      let player = clients[player_index];
-      let opponent = clients[opponent_index];
-      let won = (player["hasCarrot"] && data.keep) || (!player["hasCarrot"] && !data.keep)
-      if (won) {
-        player["score"]++;
-      } else {
-        opponent["score"]++;
-      }
-      io.to(player["client_id"]).emit("game_update", {won: won, scores: [player["score"], opponent["score"]]});
-      io.to(opponent["client_id"]).emit("game_update", {won: !won, scores: [opponent["score"], player["score"]]});
+      madeMove(io, data.keep, data.room);
     });
 
     socket.on("new_round_client", (room_id) => {
@@ -102,6 +131,14 @@ io.on("connection", (socket) => {
         clients[1]["isPeeker"] = !clients[1]["isPeeker"]
         let player_data = clients.map(client => removeId(client));
         io.to(data.room).emit("new_round_server", player_data);
+
+        // Set timer
+        if (room["timer"]) {
+          clearInterval(room["timer"]);
+        }
+        room["timer"] = setInterval(() => {
+          updateTimer(io, room_id, room);
+        }, 1000);
       }
     });
   });
@@ -117,6 +154,7 @@ io.on("connection", (socket) => {
         }
       }
       if (room["clients"].length === 0) {
+        clearInterval(room["timer"]);
         rooms.splice(i, 1);
       }
     }
