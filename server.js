@@ -63,8 +63,6 @@ const madeMove = async (emitter, keep, room_id) => {
   let player_index = !clients[0]["isPeeker"] ? 0 : 1;
   let opponent_index = player_index ? 0 : 1;
   let player = clients[player_index];
-  let message = keep ? `${player["username"]} chose to keep their box!` : `${player["username"]} chose to swap their box!`;
-  await emitter.to(room_id).emit('log_event', message);
   let opponent = clients[opponent_index];
   let won = (player["hasCarrot"] && keep) || (!player["hasCarrot"] && !keep)
   if (won) {
@@ -72,6 +70,11 @@ const madeMove = async (emitter, keep, room_id) => {
   } else {
     opponent["score"]++;
   }
+  emitter.to(room_id).emit("what_happened", {
+    actionPlayer: player["username"],
+    kept: keep,
+    won: won
+  })
   emitter.to(player["client_id"]).emit("game_update", {won: won, scores: [player["score"], opponent["score"]]});
   emitter.to(opponent["client_id"]).emit("game_update", {won: !won, scores: [opponent["score"], player["score"]]});
 }
@@ -81,7 +84,6 @@ let rooms = []
 io.on("connection", (socket) => {
   socket.on("join_room", (data) => {
     socket.join(data.room);
-    io.to(data.room).emit("joined_room", data.username);
     filteredRooms = rooms.filter(room => room["room_id"] === data.room);
     let newUser = {
       username: data.username,
