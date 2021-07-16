@@ -16,8 +16,8 @@ const server = app.listen(port, () => {
 
 const io = socketIO(server, {
   cors: {
-    origin: "http://localhost:3000",
-    // origin: "https://carrot-in-a-box.netlify.app",
+    // origin: "http://localhost:3000",
+    origin: "https://carrot-in-a-box.netlify.app",
     credentials: true
   }
 });
