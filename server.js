@@ -1,7 +1,6 @@
 const express = require("express");
 const socketIO = require("socket.io");
 const cors = require("cors");
-const e = require("cors");
 
 const app = express();
 
@@ -20,6 +19,24 @@ const io = socketIO(server, {
     origin: "https://carrot-in-a-box.netlify.app",
     credentials: true
   }
+});
+
+app.post('/openroom', (req, res) => {
+  let requestedRoomId = req.body.room_id;
+  for (let i = 0; i < rooms.length; i++) {
+    let thisRoom = rooms[i];
+    if (thisRoom["room_id"] === requestedRoomId) {
+      res.send({
+        exists: true,
+        clientCount: thisRoom["clients"].length
+      });
+      return
+    }
+  }
+  res.send({
+    exists: false,
+    clientCount: 0
+  });
 });
 
 const flipCoin = () => (
@@ -70,13 +87,16 @@ const madeMove = async (emitter, keep, room_id) => {
   } else {
     opponent["score"]++;
   }
-  emitter.to(room_id).emit("what_happened", {
+  await emitter.to(room_id).emit("what_happened", {
     actionPlayer: player["username"],
     kept: keep,
     won: won
   })
-  emitter.to(player["client_id"]).emit("game_update", {won: won, scores: [player["score"], opponent["score"]]});
-  emitter.to(opponent["client_id"]).emit("game_update", {won: !won, scores: [opponent["score"], player["score"]]});
+  await emitter.to(player["client_id"]).emit("game_update", {won: won, scores: [player["score"], opponent["score"]]});
+  await emitter.to(opponent["client_id"]).emit("game_update", {won: !won, scores: [opponent["score"], player["score"]]});
+  for (let i = 0; i < room["spectators"].length; i++) {
+    emitter.to(room["spectators"][i]["client_id"]).emit("game_update", {won: false, scores: [clients[0]["score"], clients[1]["score"]]});
+  }
 }
 
 let rooms = []
@@ -96,6 +116,7 @@ io.on("connection", (socket) => {
       rooms.push({
         room_id: data.room,
         clients: [newUser],
+        spectators: [],
         num_ready: 0,
         seconds: MAX_SECONDS,
         timer: null
@@ -103,14 +124,18 @@ io.on("connection", (socket) => {
     } else {
       ourRoom = filteredRooms[0]
       let clients = ourRoom["clients"]
-      clients.push(newUser);
-      if (clients.length === 2) {
-        // Choose peeker and carrot-haver
-        clients[flipCoin()]["isPeeker"] = true;
-        clients[flipCoin()]["hasCarrot"] = true;
-
+      if (clients.length < 2) {
+        clients.push(newUser);
+        if (clients.length === 2) {
+          clients[flipCoin()]["isPeeker"] = true;
+          clients[flipCoin()]["hasCarrot"] = true;
+          let player_data = clients.map(client => removeId(client));
+          io.to(data.room).emit("game_ready", player_data);
+        }
+      } else {
+        ourRoom["spectators"].push(newUser);
         let player_data = clients.map(client => removeId(client));
-        io.to(data.room).emit("game_ready", player_data);
+        io.to(socket.id).emit("game_ready", player_data);
       }
     }
 
